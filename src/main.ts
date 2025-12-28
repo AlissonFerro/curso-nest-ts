@@ -10,7 +10,9 @@ async function bootstrap() {
     forbidNonWhitelisted: true,
     transform: true
   }));
-  
+  const server = app.getHttpAdapter().getInstance().set('trust proxy', true);
+  server.set('trust proxy', 1)
+
   await app.listen(8080);
 }
 bootstrap();

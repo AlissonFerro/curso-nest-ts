@@ -15,7 +15,7 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
       isGlobal: true,
       envFilePath: '.env'
     }),
-    MongooseModule.forRoot('mongodb://localhost/nest_books'),
+    MongooseModule.forRoot('mongodb://localhost/nest_books?replicaSet=rs0'),
     BooksModule, 
     AuthorsModule, 
     UsersModule, 

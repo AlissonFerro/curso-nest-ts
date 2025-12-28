@@ -9,6 +9,7 @@ import { JWTService } from './auth/jwt.service';
 import { ChangePasswordDTO } from './dto/change-password.dto';
 import { BlacklistService } from 'src/blacklist/blacklist.service';
 import { AuditLogsService } from 'src/audit-logs/audit-logs.service';
+import cleanIpAndReplace from 'src/commom/utils/ip-parser.util';
 
 @Injectable()
 export class UsersService {
@@ -20,36 +21,104 @@ export class UsersService {
     private jwtService: JWTService,
     private auditLogService: AuditLogsService,
   ) { }
-  // TODO: Ao criar um user, gerar o token
-  async create(createUserDto: CreateUserDto): Promise<Partial<User>> {
-    const { password, ...userData } = createUserDto;
 
+  async create(createUserDto: CreateUserDto, ip: string) {
+    const session = await this.connection.startSession();
+    session.startTransaction();
+    const { password, ...userData } = createUserDto;
     const hashedPassword = await this.hashService.hashPassword(password);
-    const newUser = new this.userModel({
-      ...userData,
-      password: hashedPassword
-    });
-    const savedUser = await newUser.save();
-    const { password: _, ...userWithoutPassword } = savedUser.toObject();
-    return userWithoutPassword
+    const cleanIp = cleanIpAndReplace(ip);
+
+    try {
+      const newUser = new this.userModel({
+        ...userData,
+        password: hashedPassword
+      });
+      const savedUser = await newUser.save({ session });
+      const { password: _, ...userWithoutPassword } = savedUser.toObject();
+
+      this.auditLogService.add({
+        userId: newUser._id,
+        action: 'CREATE_USER',
+        status: 'SUCCESS',
+        resource: 'User',
+        resourceId: newUser._id,
+        ipAddress: cleanIp
+      }).catch(err => console.error('Erro ao gravar log de sucesso:', err));
+
+      await session.commitTransaction()
+
+      const token = this.jwtService.generateJWT({ _id: newUser._id, tokenVersion: newUser.tokenVersion });
+      return { user: userWithoutPassword, token }
+
+    } catch (error) {
+      if (session.inTransaction())
+        await session.abortTransaction();
+
+      this.auditLogService.add({
+        userId: undefined,
+        action: 'CREATE_USER',
+        status: 'FAILED',
+        resource: 'User',
+        resourceId: undefined,
+        ipAddress: cleanIp
+      }).catch(err => console.error('Erro ao gravar log de failed:', err));
+      throw error
+    } finally {
+      session.endSession();
+    }
   }
 
-  async login(loginDto: LoginDto): Promise<{ token: string }> {
+  async login(loginDto: LoginDto, ip: string): Promise<{ token: string }> {
+    const session = await this.connection.startSession();
+    session.startTransaction();
     const { email, password } = loginDto;
-    const user = await this.userModel.findOne({ email }).select(['password', 'tokenVersion']).exec();
-    if (!user)
-      throw new NotFoundException('Email e/ou senha invalidas')
+    const cleanIp = cleanIpAndReplace(ip);
 
-    const { password: pass } = user;
+    let userIdForLog: Types.ObjectId | undefined = undefined; 
 
+    try {
+      const user = await this.userModel.findOne({ email }).select(['password', 'tokenVersion']).exec();
+      if (!user)
+        throw new UnauthorizedException('Email e/ou senha invalidas')
 
-    const isMatchPass = await this.hashService.comparePassword(password, pass);
+      userIdForLog = user._id;
+      const { password: pass } = user;
 
-    if (!isMatchPass)
-      throw new NotFoundException('Email e/ou senha invalidas');
+      const isMatchPass = await this.hashService.comparePassword(password, pass);
 
-    const res = this.jwtService.generateJWT({ _id: user._id, tokenVersion: user.tokenVersion });
-    return { token: res }
+      if (!isMatchPass)
+        throw new UnauthorizedException('Email e/ou senha invalidas');
+
+      const res = this.jwtService.generateJWT({ _id: user._id, tokenVersion: user.tokenVersion });
+
+      this.auditLogService.add({
+        userId: user._id,
+        action: 'LOGIN',
+        status: 'SUCCESS',
+        resource: 'User',
+        resourceId: user._id,
+        ipAddress: cleanIp
+      }).catch(err => console.error('Erro ao gravar log de sucesso:', err));
+
+      return { token: res }
+    } catch (error) {
+      if (session.inTransaction())
+        await session.abortTransaction();
+
+      this.auditLogService.add({
+        userId: userIdForLog,
+        action: "LOGIN",
+        status: "FAILED",
+        resource: "User",
+        resourceId: userIdForLog,
+        ipAddress: cleanIp
+      }).catch(err => console.error("Erro ao gravar log de failed", err));
+
+      throw error;
+    } finally {
+      session.endSession()
+    }
   }
 
   async findById(id: Types.ObjectId | undefined): Promise<User> {
@@ -64,7 +133,7 @@ export class UsersService {
     return user;
   }
 
-  async findByIdWithPassword(id: Types.ObjectId | undefined): Promise<User> {
+  private async findByIdWithPassword(id: Types.ObjectId | undefined): Promise<User> {
     if (!id)
       throw new BadRequestException('Nenhum id fornecido');
 
@@ -90,14 +159,18 @@ export class UsersService {
     return { token: newToken }
   }
 
-  async changePassword(changePasswordDTO: ChangePasswordDTO, token: string) {
+  async changePassword(changePasswordDTO: ChangePasswordDTO, token: string, ip: string) {
     const session = await this.connection.startSession();
     session.startTransaction();
-    if(changePasswordDTO.oldPassword === changePasswordDTO.password)
+
+    if (changePasswordDTO.oldPassword === changePasswordDTO.password)
       throw new BadRequestException('Senha inválida')
+
+    const payload = await this.jwtService.verifyTokenAndReturnDecode(token);
+    const user = await this.findByIdWithPassword(payload.user._id);
+
+    const cleanIp = cleanIpAndReplace(ip);
     try {
-      const payload = await this.jwtService.verifyTokenAndReturnDecode(token);
-      const user = await this.findByIdWithPassword(payload.user._id);
       const isMatched = await this.hashService.comparePassword(changePasswordDTO.oldPassword, user.password);
       if (!isMatched)
         throw new BadRequestException('Senha inválida');
@@ -120,33 +193,39 @@ export class UsersService {
         "PASSWORD_CHANGE",
         session
       )
-      await session.commitTransaction();
-
       const newToken = this.jwtService.generateJWT({ _id: user._id, tokenVersion: user.tokenVersion })
 
-      this.auditLogService.add(
-        payload.user._id,
-        'PASSWORD_CHANGE',
-        'SUCCESS',
-        'User',
-        user._id
-      ).catch(err => console.error('Erro ao gravar log de sucesso:', err));
-
+      this.auditLogService.add({
+        userId: payload.user._id,
+        action: 'PASSWORD_CHANGE',
+        status: 'SUCCESS',
+        resource: 'User',
+        resourceId: user._id,
+        ipAddress: cleanIp
+      }).catch(err => console.error('Erro ao gravar log de sucesso:', err));
+      await session.commitTransaction();
+      session.endSession();
       return { token: newToken };
     } catch (error) {
-      if (session.inTransaction()) {
+      if (session.inTransaction())
         await session.abortTransaction();
-      }
+
+      this.auditLogService.add({
+        userId: payload.user._id,
+        action: 'PASSWORD_CHANGE',
+        status: 'FAILED',
+        resource: 'User',
+        resourceId: user._id,
+        ipAddress: cleanIp
+      }).catch(err => console.error('Erro ao gravar log de sucesso:', err));
+
       session.endSession();
       throw error;
-    } finally {
-      session.endSession()
     }
   }
 
-  // TODO: Troca de Senha: changePassword (exige a senha atual + a nova).
+
+
   // TODO: Logout em todos os dispositivos: Um método que reseta o tokenVersion, deslogando o usuário de todos os lugares de uma vez.
   // TODO: Sanitização de DTOs: No seu main.ts, garanta que o ValidationPipe tenha whitelist: true e forbidNonWhitelisted: true para evitar Mass Assignment Attacks.
-
-
 }

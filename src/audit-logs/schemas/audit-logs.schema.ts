@@ -4,7 +4,7 @@ import { Document, Types } from "mongoose";
 @Schema({ timestamps: true, collection: 'audit_logs' })
 export class AuditLog extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User', index: true })
-  userId: Types.ObjectId;
+  userId?: Types.ObjectId;
 
   @Prop({ required: true, index: true })
   action: string; 
@@ -13,7 +13,7 @@ export class AuditLog extends Document {
   resource: string; 
 
   @Prop({ type: Types.ObjectId })
-  resourceId: Types.ObjectId;
+  resourceId?: Types.ObjectId;
 
   @Prop({ type: Object })
   oldValues: any;
