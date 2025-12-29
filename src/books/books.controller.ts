@@ -1,12 +1,13 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, BadRequestException, UseGuards } from '@nestjs/common';
 import { BooksService } from './books.service';
 import { CreateBookDto } from './dto/create-book.dto';
-import { isMongoId } from 'class-validator';
-import mongoose, { Types } from 'mongoose';
+import { Types } from 'mongoose';
 import { ParseObjectIdPipe } from 'src/commom/pipes/parse-object-id.pipe';
 import { UpdateBookDto } from './dto/update-book.dto';
+import { AuthGuard } from 'src/commom/guards/auth.guard';
 
 @Controller('books')
+@UseGuards(AuthGuard)
 export class BooksController {
   constructor(private readonly booksService: BooksService) { }
 

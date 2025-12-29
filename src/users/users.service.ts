@@ -121,7 +121,7 @@ export class UsersService {
     }
   }
 
-  async findById(id: Types.ObjectId | undefined): Promise<User> {
+  async findById(id: Types.ObjectId | undefined | string): Promise<User> {
     if (!id)
       throw new BadRequestException('Nenhum id fornecido');
 
