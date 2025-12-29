@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, forwardRef, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { Connection, Model, Types } from 'mongoose';
 import { User } from './schemas/users.schema';
@@ -16,6 +16,7 @@ export class UsersService {
   constructor(
     @InjectModel(User.name) private userModel: Model<User>,
     @InjectConnection() private readonly connection: Connection,
+    @Inject(forwardRef(() => BlacklistService))
     private blacklistService: BlacklistService,
     private hashService: HashService,
     private jwtService: JWTService,

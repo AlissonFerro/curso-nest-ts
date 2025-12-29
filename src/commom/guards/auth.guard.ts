@@ -1,14 +1,14 @@
 import { CanActivate, ExecutionContext, forwardRef, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
 import { Request } from "express";
 import { Types } from "mongoose";
 import { BlacklistService } from "src/blacklist/blacklist.service";
-import { JWTService } from "src/users/auth/jwt.service";
 import { UsersService } from "src/users/users.service";
 
 @Injectable()
 export class AuthGuard implements CanActivate {
     constructor(
-        private jwtService: JWTService,
+        private jwtService: JwtService,
         private blacklistService: BlacklistService,
         @Inject(forwardRef(() => UsersService)) // Se for o caso
         private usersService: UsersService,
@@ -27,7 +27,7 @@ export class AuthGuard implements CanActivate {
         if (!token) throw new UnauthorizedException('Token não fornecido');
 
         try {
-            const payload = await this.jwtService.verifyTokenAndReturnDecode(token);
+            const payload = await this.jwtService.decode(token);
 
             const isBlacklisted = await this.blacklistService.isBlacklisted(token);
             if (isBlacklisted) throw new UnauthorizedException('Token revogado');
